@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Talonario de Rifa (Con Base de Datos)</title>
+    <style>
+        body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;background-color:#f0f2f5;display:grid;place-items:center;min-height:100vh;margin:0}h1{color:#333}#raffle-grid{display:grid;grid-template-columns:repeat(10,1fr);gap:6px;width:90vw;max-width:600px;border:2px solid #ccc;background-color:#ddd;padding:6px;border-radius:8px}.number-box{aspect-ratio:1/1;display:flex;justify-content:center;align-items:center;font-size:1.5rem;font-weight:bold;color:#444;background-color:#fff;border:1px solid #bbb;border-radius:5px;cursor:pointer;transition:background-color .2s,transform .2s;position:relative;user-select:none}.number-box:hover{background-color:#e9e9e9;transform:scale(1.05)}.number-box.taken{background-color:#ffebee;color:#c62828;font-style:italic}.number-box.taken::after{content:'X';position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);font-size:3rem;color:#ef5350;font-weight:900;opacity:.8;pointer-events:none}.modal{display:none;position:fixed;z-index:1000;left:0;top:0;width:100%;height:100%;overflow:auto;background-color:rgba(0,0,0,.5)}.modal-content{background-color:#fefefe;margin:15% auto;padding:25px;border:1px solid #888;width:90%;max-width:400px;border-radius:10px;box-shadow:0 5px 15px rgba(0,0,0,.3);text-align:center}#modal-title{margin-top:0;font-size:2rem;color:#007bff}#person-name{width:calc(100% - 20px);padding:10px;margin-top:10px;margin-bottom:20px;font-size:1rem;border:1px solid #ccc;border-radius:5px}.modal-buttons{display:flex;justify-content:space-around;gap:10px}.modal-buttons button{padding:12px 20px;font-size:1rem;font-weight:bold;border:none;border-radius:5px;cursor:pointer;transition:opacity .2s;flex-grow:1}.modal-buttons button:hover{opacity:.85}#save-btn{background-color:#28a745;color:#fff}#release-btn{background-color:#dc3545;color:#fff}
+    </style>
+</head>
+<body>
+
+    <h1>Talonario de Rifa</h1>
+    <div id="raffle-grid"></div>
+
+    <div id="myModal" class="modal">
+        <div class="modal-content">
+            <h2 id="modal-title">Número 00</h2>
+            <label for="person-name">Nombre del participante:</label>
+            <input type="text" id="person-name" placeholder="Escribe el nombre aquí">
+            <div class="modal-buttons">
+                <button id="save-btn">Guardar</button>
+                <button id="release-btn">Liberar Número</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // --- JAVASCRIPT MODIFICADO ---
+
+        document.addEventListener('DOMContentLoaded', () => {
+            
+            const grid = document.getElementById('raffle-grid');
+            const modal = document.getElementById('myModal');
+            const modalTitle = document.getElementById('modal-title');
+            const nameInput = document.getElementById('person-name');
+            const saveBtn = document.getElementById('save-btn');
+            const releaseBtn = document.getElementById('release-btn');
+
+            // Ya no usamos localStorage. Este objeto se llenará desde la API.
+            let raffleData = {};
+            let currentNumber = null;
+
+            // --- 1. Función para crear la cuadrícula (Sigue igual) ---
+            function createGrid() {
+                grid.innerHTML = '';
+                for (let i = 0; i < 100; i++) {
+                    const numStr = String(i).padStart(2, '0');
+                    const box = document.createElement('div');
+                    box.classList.add('number-box');
+                    box.textContent = numStr;
+                    box.dataset.number = i;
+                    
+                    // Se revisa el objeto 'raffleData' que cargamos de la DB
+                    if (raffleData[i]) {
+                        box.classList.add('taken');
+                    }
+                    
+                    grid.appendChild(box);
+                }
+            }
+
+            // --- 2. Función para actualizar el estado visual (Sigue igual) ---
+            function updateBoxVisual(number, isTaken) {
+                const box = grid.querySelector(`.number-box[data-number="${number}"]`);
+                if (box) {
+                    if (isTaken) {
+                        box.classList.add('taken');
+                    } else {
+                        box.classList.remove('taken');
+                    }
+                }
+            }
+
+            // --- 3. NUEVA FUNCIÓN: Cargar datos desde el Backend ---
+            async function loadDataAndCreateGrid() {
+                try {
+                    // Hacemos una petición GET a nuestra API
+                    const response = await fetch('/api/numbers');
+                    if (!response.ok) {
+                        throw new Error('Error al cargar los datos');
+                    }
+                    raffleData = await response.json(); // Carga { "5": "Ana", "10": "Juan" }
+                    createGrid(); // Dibuja la cuadrícula DESPUÉS de cargar los datos
+                } catch (error) {
+                    console.error('Error:', error);
+                    alert('No se pudo conectar al servidor de la rifa.');
+                }
+            }
+
+            // --- 4. Abrir el Popup (Sigue igual) ---
+            grid.addEventListener('click', (e) => {
+                if (e.target.classList.contains('number-box')) {
+                    currentNumber = e.target.dataset.number;
+                    const numStr = String(currentNumber).padStart(2, '0');
+                    modalTitle.textContent = `Número ${numStr}`;
+                    nameInput.value = raffleData[currentNumber] || ''; 
+                    modal.style.display = 'block';
+                    nameInput.focus();
+                }
+            });
+
+            // --- 5. Cerrar el Popup (Sigue igual) ---
+            window.addEventListener('click', (e) => {
+                if (e.target === modal) {
+                    modal.style.display = 'none';
+                    currentNumber = null;
+                }
+            });
+
+            // --- 6. MODIFICADO: Acción del botón "Guardar" ---
+            saveBtn.addEventListener('click', async () => {
+                const name = nameInput.value.trim();
+
+                if (!name) {
+                    alert('Por favor, escribe un nombre o presiona "Liberar".');
+                    return;
+                }
+
+                try {
+                    // Hablamos con la API para guardar
+                    const response = await fetch('/api/save', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({ number: currentNumber, name: name }),
+                    });
+
+                    if (!response.ok) {
+                        throw new Error('El servidor no pudo guardar.');
+                    }
+
+                    // Si todo salió bien, actualizamos el estado local
+                    raffleData[currentNumber] = name;
+                    updateBoxVisual(currentNumber, true);
+                    modal.style.display = 'none';
+                    currentNumber = null;
+
+                } catch (error) {
+                    console.error('Error al guardar:', error);
+                    alert('Error al guardar el número.');
+                }
+            });
+
+            // --- 7. MODIFICADO: Acción del botón "Liberar" ---
+            releaseBtn.addEventListener('click', async () => {
+                try {
+                    // Hablamos con la API para liberar
+                    const response = await fetch('/api/release', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({ number: currentNumber }),
+                    });
+
+                    if (!response.ok) {
+                        throw new Error('El servidor no pudo liberar.');
+                    }
+                    
+                    // Si todo salió bien, actualizamos el estado local
+                    delete raffleData[currentNumber];
+                    updateBoxVisual(currentNumber, false);
+                    modal.style.display = 'none';
+                    currentNumber = null;
+
+                } catch (error) {
+                    console.error('Error al liberar:', error);
+                    alert('Error al liberar el número.');
+                }
+            });
+
+            // --- Inicia la aplicación cargando los datos de la DB ---
+            loadDataAndCreateGrid();
+        });
+    </script>
+
+</body>
+</html>
