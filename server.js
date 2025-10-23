@@ -32,7 +32,8 @@ async function initDB() {
         name VARCHAR(255) NOT NULL
       );
     `);
-    console.log('Base de datos conectada y tabla '+ rifa +' asegurada.');
+    console.log('Base de datos conectada y tabla rifa asegurada.');
+    console.log(connectionUrl ? 'DATABASE_URL encontrada.' : 'Usando variables individuales de DB.');
   } catch (error) {
     console.error('Error al conectar o inicializar la DB:', error);
   }
