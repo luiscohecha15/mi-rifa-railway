@@ -1,39 +1,52 @@
 // --- 1. Importar las librerías ---
 const express = require('express');
-const mysql = require('mysql2/promise'); // Usamos 'promise' para código más limpio
+const mysql = require('mysql2/promise');
 const cors = require('cors');
-require('dotenv').config(); // Para leer variables de entorno (aunque Railway las inyecta)
+require('dotenv').config();
 
 const app = express();
-// Railway te dará un puerto, o usamos el 3000 para pruebas locales
 const PORT = process.env.PORT || 3000;
 
 // --- 2. Middlewares ---
-app.use(cors()); // Permite que tu frontend (en otro dominio) hable con este backend
-app.use(express.json()); // Permite al servidor entender JSON (que enviaremos desde el frontend)
-app.use(express.static('public')); // Sirve tu 'index.html' desde la carpeta 'public'
+app.use(cors());
+app.use(express.json());
+app.use(express.static('public'));
 
-let pool; // La conexión a la base de datos
+let pool;
 
-// --- 3. Función para Conectar a MySQL y Crear la Tabla ---
+// --- 3. Función para Conectar a MySQL y Crear/Actualizar la Tabla ---
 async function initDB() {
   try {
-    // Railway provee la URL de conexión en una sola variable
-    // Si no existe (ej. en local), usa las variables individuales
     const connectionUrl = process.env.DATABASE_URL || 
       `mysql://${process.env.MYSQLUSER}:${process.env.MYSQLPASSWORD}@${process.env.MYSQLHOST}:${process.env.MYSQLPORT}/${process.env.MYSQLDATABASE}`;
 
     pool = mysql.createPool(connectionUrl);
 
-    // Conectar y crear la tabla si no existe
+    // Paso A: Asegurar que la tabla base exista
     await pool.query(`
       CREATE TABLE IF NOT EXISTS rifa (
         number INT PRIMARY KEY,
         name VARCHAR(255) NOT NULL
       );
     `);
-    console.log('Base de datos conectada y tabla rifa asegurada.');
-    console.log(connectionUrl ? 'DATABASE_URL encontrada.' : 'Usando variables individuales de DB.');
+    
+    // Paso B: AÑADIR LA NUEVA COLUMNA 'is_paid' SI NO EXISTE
+    // Lo hacemos en un try/catch separado por si la tabla ya existe
+    // y solo queremos añadir la columna.
+    try {
+      await pool.query(`
+        ALTER TABLE rifa ADD COLUMN is_paid BOOLEAN DEFAULT FALSE;
+      `);
+      console.log('Columna is_paid añadida/asegurada.');
+    } catch (error) {
+      // Si el error es 'ER_DUP_FIELDNAME', significa que la columna ya existe.
+      // Lo ignoramos y continuamos.
+      if (error.code !== 'ER_DUP_FIELDNAME') {
+        throw error; // Lanzamos cualquier otro error
+      }
+    }
+    
+    console.log('Base de datos conectada y tabla rifa actualizada.');
   } catch (error) {
     console.error('Error al conectar o inicializar la DB:', error);
   }
@@ -42,14 +55,20 @@ async function initDB() {
 // --- 4. Las Rutas de la API (La comunicación) ---
 
 // [GET] /api/numbers
-// Devuelve TODOS los números guardados
+// Devuelve TODOS los números guardados (AHORA CON ESTADO DE PAGO)
 app.get('/api/numbers', async (req, res) => {
   try {
+    // SELECT * traerá 'number', 'name', y 'is_paid'
     const [rows] = await pool.query('SELECT * FROM rifa');
-    // Transforma el array [ {number: 5, name: "Ana"} ]
-    // en un objeto { 5: "Ana" } para que el frontend lo entienda
+    
+    // Transformamos el array en un objeto para el frontend
+    // La data ahora será: { 5: { name: "Ana", is_paid: 1 }, 10: { name: "Juan", is_paid: 0 } }
     const data = rows.reduce((acc, row) => {
-      acc[row.number] = row.name;
+      acc[row.number] = {
+        name: row.name,
+        // MySQL devuelve 1 o 0 para BOOLEAN, lo convertimos a true/false
+        is_paid: !!row.is_paid 
+      };
       return acc;
     }, {});
     res.json(data);
@@ -59,21 +78,20 @@ app.get('/api/numbers', async (req, res) => {
 });
 
 // [POST] /api/save
-// Guarda o actualiza un número
+// Guarda o actualiza un número (AHORA CON ESTADO DE PAGO)
 app.post('/api/save', async (req, res) => {
-  const { number, name } = req.body;
+  // Recibimos 'is_paid' (que será true o false)
+  const { number, name, is_paid } = req.body;
 
   if (name === null || name.trim() === '') {
-    // Si el nombre está vacío, es una liberación
-    return res.status(400).json({ message: 'El nombre no puede estar vacío. Use /api/release para liberar.' });
+    return res.status(400).json({ message: 'El nombre no puede estar vacío.' });
   }
 
   try {
-    // 'INSERT ... ON DUPLICATE KEY UPDATE' es perfecto para esto:
-    // Si el número (PRIMARY KEY) existe, actualiza el nombre.
-    // Si no existe, inserta la nueva fila.
-    const query = 'INSERT INTO rifa (number, name) VALUES (?, ?) ON DUPLICATE KEY UPDATE name = ?';
-    await pool.query(query, [number, name, name]);
+    // Actualizamos la consulta para incluir 'is_paid'
+    const query = 'INSERT INTO rifa (number, name, is_paid) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE name = ?, is_paid = ?';
+    // Pasamos los nuevos parámetros
+    await pool.query(query, [number, name, is_paid, name, is_paid]);
     res.json({ success: true, message: `Número ${number} guardado para ${name}` });
   } catch (error) {
     res.status(500).json({ message: 'Error al guardar el número', error });
@@ -81,7 +99,7 @@ app.post('/api/save', async (req, res) => {
 });
 
 // [POST] /api/release
-// Libera (elimina) un número
+// Libera (elimina) un número (SIN CAMBIOS)
 app.post('/api/release', async (req, res) => {
   const { number } = req.body;
   try {
